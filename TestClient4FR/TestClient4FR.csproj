@@ -33,8 +33,8 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="AgileConfig.Client4FR, Version=1.0.1.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\AgileConfig.Client4FR.1.0.1\lib\netstandard2.0\AgileConfig.Client4FR.dll</HintPath>
+    <Reference Include="AgileConfig.Client4FR, Version=1.0.2.0, Culture=neutral, processorArchitecture=MSIL">
+      <HintPath>..\packages\AgileConfig.Client4FR.1.0.2\lib\netstandard2.0\AgileConfig.Client4FR.dll</HintPath>
     </Reference>
     <Reference Include="AgileHttp, Version=0.0.6.0, Culture=neutral, processorArchitecture=MSIL">
       <HintPath>..\packages\AgileHttp.0.0.6\lib\netstandard2.0\AgileHttp.dll</HintPath>

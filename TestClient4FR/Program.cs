@@ -20,7 +20,7 @@ namespace TestClient4FR
 
             new Thread(() =>
             {
-                var client = new ConfigClient(appid, secret, servers, new MyLogger());
+                var client = new ConfigClient(appid, secret, servers, "TEST", new MyLogger());
                 client.ConfigChanged += (e)=> {
                     if (e != null)
                     {
