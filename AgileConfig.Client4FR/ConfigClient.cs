@@ -494,7 +494,7 @@ namespace AgileConfig.Client
                             WriteConfigsToLocal(respContent);
                             _isLoadFromLocal = false;
 
-                            Logger?.LogTrace($"Aclient load all the configs from {apiUrl} successful . try count: {failCount}.");
+                            Logger?.LogTrace($"client load all the configs from {apiUrl} successful . try count: {failCount}.");
                             return true;
                         }
                         else
