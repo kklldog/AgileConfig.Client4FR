@@ -18,7 +18,7 @@ Install-Package AgileConfig.Client4FR -Version 1.0.2
 
             new Thread(() =>
             {
-                var client = new ConfigClient(appid, secret, servers, new MyLogger());
+                var client = new ConfigClient(appid, secret, servers, "DEV", new MyLogger());
                 client.ConfigChanged += (e)=> {
                     if (e != null)
                     {
