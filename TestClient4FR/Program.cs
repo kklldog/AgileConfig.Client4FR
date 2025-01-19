@@ -16,11 +16,11 @@ namespace TestClient4FR
 
             var appid = "test_app";
             var secret = "test_app";
-            var servers = "http://agileconfig_server.xbaby.xyz";
+            var servers = "https://agileconfig-server.xbaby.xyz";
 
             new Thread(() =>
             {
-                var client = new ConfigClient(appid, secret, servers, "TEST", new MyLogger());
+                var client = new ConfigClient(appid, secret, servers, "DEV", new MyLogger());
                 client.ConfigChanged += (e)=> {
                     if (e != null)
                     {
