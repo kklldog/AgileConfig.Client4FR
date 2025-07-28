@@ -9,6 +9,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Reflection; // 用于反射获取IIS网站根目录
 namespace AgileConfig.Client
 {
     public enum ConnectStatus
@@ -539,7 +540,207 @@ namespace AgileConfig.Client
             LoadConfigs(configs);
         }
 
-        private string LocalCacheFileName => $"{_AppId}.agileconfig.client.configs.cache";
+        /// <summary>
+        /// 获取本地缓存文件的完整路径，优先使用网站根目录而非IIS系统目录
+        /// 使用多重回退策略确保在不同环境下都能找到合适的缓存目录
+        /// </summary>
+        private string LocalCacheFileName
+        {
+            get
+            {
+                var fileName = $"{_AppId}.agileconfig.client.configs.cache";
+
+                try
+                {
+                    // 尝试获取网站根目录（兼容不同的.NET版本），优先级最高
+                    var webRootPath = GetWebRootPath();
+                    if (!string.IsNullOrEmpty(webRootPath))
+                    {
+                        var fullPath = Path.Combine(webRootPath, fileName);
+                        TestWritePermission(Path.GetDirectoryName(fullPath));
+                        return fullPath;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger?.LogError($"Cannot use web root directory for cache file: {ex.Message}");
+                }
+
+                try
+                {
+                    // 回退到应用程序域基目录，第二优先级
+                    var appDomainPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, fileName);
+                    TestWritePermission(Path.GetDirectoryName(appDomainPath));
+                    return appDomainPath;
+                }
+                catch (Exception ex)
+                {
+                    Logger?.LogError($"Cannot use app domain directory for cache file: {ex.Message}");
+                }
+
+                try
+                {
+                    // 回退到程序集所在目录，第三优先级
+                    var assemblyPath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
+                    if (!string.IsNullOrEmpty(assemblyPath))
+                    {
+                        var fullPath = Path.Combine(assemblyPath, fileName);
+                        TestWritePermission(assemblyPath);
+                        return fullPath;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger?.LogError($"Cannot use assembly directory for cache file: {ex.Message}");
+                }
+
+                try
+                {
+                    // 回退到临时目录，第四优先级
+                    var tempPath = Path.Combine(Path.GetTempPath(), fileName);
+                    TestWritePermission(Path.GetDirectoryName(tempPath));
+                    return tempPath;
+                }
+                catch (Exception ex)
+                {
+                    Logger?.LogError($"Cannot use temp directory for cache file: {ex.Message}");
+                }
+
+                // 最后回退到当前目录
+                return fileName;
+            }
+        }
+
+        /// <summary>
+        /// 获取Web应用程序根目录路径，兼容多种.NET版本和环境
+        /// 通过反射机制避免编译时依赖，支持.NET Framework和.NET Core/.NET 5+
+        /// </summary>
+        private string GetWebRootPath()
+        {
+            try
+            {
+                // 方法1 - 尝试使用 System.Web.Hosting.HostingEnvironment（.NET Framework）
+                var hostingEnvironmentType = Type.GetType("System.Web.Hosting.HostingEnvironment, System.Web");
+                if (hostingEnvironmentType != null)
+                {
+                    var isHostedProperty = hostingEnvironmentType.GetProperty("IsHosted");
+                    var applicationPhysicalPathProperty = hostingEnvironmentType.GetProperty("ApplicationPhysicalPath");
+
+                    if (isHostedProperty != null && applicationPhysicalPathProperty != null)
+                    {
+                        var isHosted = (bool)isHostedProperty.GetValue(null);
+                        if (isHosted)
+                        {
+                            var path = (string)applicationPhysicalPathProperty.GetValue(null);
+                            if (!string.IsNullOrEmpty(path))
+                            {
+                                return path;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogTrace($"Failed to get path via HostingEnvironment: {ex.Message}");
+            }
+
+            try
+            {
+                // 方法2 - 尝试通过HttpContext获取（如果在Web环境中）
+                var httpContextType = Type.GetType("System.Web.HttpContext, System.Web");
+                if (httpContextType != null)
+                {
+                    var currentProperty = httpContextType.GetProperty("Current");
+                    if (currentProperty != null)
+                    {
+                        var current = currentProperty.GetValue(null);
+                        if (current != null)
+                        {
+                            var serverProperty = current.GetType().GetProperty("Server");
+                            if (serverProperty != null)
+                            {
+                                var server = serverProperty.GetValue(current);
+                                var mapPathMethod = server?.GetType().GetMethod("MapPath", new[] { typeof(string) });
+                                if (mapPathMethod != null)
+                                {
+                                    var path = (string)mapPathMethod.Invoke(server, new object[] { "~/" });
+                                    if (!string.IsNullOrEmpty(path))
+                                    {
+                                        return path;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogTrace($"Failed to get path via HttpContext: {ex.Message}");
+            }
+
+            try
+            {
+                // 方法3 - 尝试从环境变量和目录结构推断（IIS环境）
+                var appPhysicalPath = Environment.GetEnvironmentVariable("APP_POOL_ID");
+                if (!string.IsNullOrEmpty(appPhysicalPath))
+                {
+                    // 在IIS环境中，尝试通过其他方式获取应用程序路径
+                    var baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
+                    if (baseDirectory.Contains("\\bin\\") || baseDirectory.EndsWith("\\bin"))
+                    {
+                        // 如果当前目录是bin目录，向上一级就是网站根目录
+                        var webRoot = Path.GetDirectoryName(baseDirectory.TrimEnd('\\'));
+                        if (webRoot.EndsWith("\\bin"))
+                        {
+                            webRoot = Path.GetDirectoryName(webRoot);
+                        }
+                        return webRoot;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger?.LogTrace($"Failed to get path via environment variables: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// 测试目录写入权限，确保可以创建缓存文件
+        /// </summary>
+        /// <param name="directoryPath">目录路径</param>
+        private void TestWritePermission(string directoryPath)
+        {
+            if (string.IsNullOrEmpty(directoryPath))
+                return;
+
+            // 确保目录存在
+            if (!Directory.Exists(directoryPath))
+            {
+                Directory.CreateDirectory(directoryPath);
+            }
+
+            // 测试写入权限
+            var testFile = Path.Combine(directoryPath, $"test_write_{Guid.NewGuid()}.tmp");
+            try
+            {
+                File.WriteAllText(testFile, "test");
+                File.Delete(testFile);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                throw new UnauthorizedAccessException($"No write permission for directory: {directoryPath}");
+            }
+            catch (DirectoryNotFoundException)
+            {
+                throw new DirectoryNotFoundException($"Directory not found: {directoryPath}");
+            }
+        }
+
+
         private void WriteConfigsToLocal(string configContent)
         {
             try
@@ -549,7 +750,18 @@ namespace AgileConfig.Client
                     return;
                 }
 
+                var filePath = LocalCacheFileName;
+
+                // 确保目录存在
+                var directory = Path.GetDirectoryName(filePath);
+
+                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
                 File.WriteAllText(LocalCacheFileName, configContent);
+                Logger?.LogTrace($"client cache all configs to local file: {filePath}"); // 增加文件路径日志
             }
             catch (Exception ex)
             {
@@ -559,12 +771,23 @@ namespace AgileConfig.Client
 
         private string ReadConfigsFromLocal()
         {
-            if (!File.Exists(LocalCacheFileName))
+            try
             {
+                var filePath = LocalCacheFileName;
+                if (!File.Exists(filePath))
+                {
+                    return "";
+                }
+
+                var content = File.ReadAllText(filePath);
+                Logger?.LogTrace($"client read configs from local file: {filePath}"); // 增加文件路径日志
+                return content;
+            }
+            catch (Exception ex) // 异常处理
+            {
+                Logger?.LogError(ex, "client try to read configs from local file but fail .");
                 return "";
             }
-
-            return File.ReadAllText(LocalCacheFileName);
         }
 
         private string DataMd5Version()
